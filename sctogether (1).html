@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SCTogether – SoundCloud gemeinsam hören</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/ably@2/ably.min.js"></script>
+<script src="https://w.soundcloud.com/player/api.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Sans', sans-serif; background: #0d0d0d; color: #f0ede8; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; border-bottom: 1px solid #1e1e1e; background: #111; flex-shrink: 0; }
+  .logo { font-family: 'Space Mono', monospace; font-size: 16px; font-weight: 700; color: #ff5500; }
+  .logo span { color: #f0ede8; }
+  .room-badge { display: flex; align-items: center; gap: 8px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 20px; padding: 5px 14px 5px 10px; font-size: 13px; color: #888; cursor: pointer; transition: border-color 0.2s; user-select: none; }
+  .room-badge:hover { border-color: #ff5500; color: #f0ede8; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+  .users-area { display: flex; align-items: center; gap: 4px; }
+  .avatar { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; border: 2px solid #0d0d0d; margin-left: -6px; }
+  .avatar:first-child { margin-left: 0; }
+
+  .main { display: flex; flex: 1; overflow: hidden; }
+
+  .player-side { flex: 1; display: flex; flex-direction: column; border-right: 1px solid #1e1e1e; overflow: hidden; }
+  .url-bar { display: flex; gap: 10px; padding: 12px 16px; background: #111; border-bottom: 1px solid #1e1e1e; flex-shrink: 0; }
+  .url-input { flex: 1; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 9px 14px; color: #f0ede8; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.2s; }
+  .url-input:focus { border-color: #ff5500; }
+  .url-input::placeholder { color: #555; }
+  .load-btn { background: #ff5500; color: white; border: none; border-radius: 8px; padding: 9px 20px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: background 0.15s, transform 0.1s; white-space: nowrap; }
+  .load-btn:hover { background: #e04800; }
+  .load-btn:active { transform: scale(0.97); }
+
+  .iframe-wrapper { flex: 1; background: #0d0d0d; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .placeholder { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .placeholder-icon { width: 72px; height: 72px; border-radius: 50%; background: #1a1a1a; display: flex; align-items: center; justify-content: center; font-size: 32px; }
+  .placeholder h3 { font-size: 16px; color: #555; font-weight: 500; }
+  .placeholder p { font-size: 13px; color: #333; }
+  #sc-frame { width: 100%; height: 100%; border: none; display: none; }
+
+  /* Controls bar */
+  .controls { padding: 10px 16px; background: #111; border-top: 1px solid #1e1e1e; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .ctrl-btn { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; color: #f0ede8; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; display: flex; align-items: center; gap: 6px; transition: all 0.15s; white-space: nowrap; }
+  .ctrl-btn:hover { border-color: #ff5500; color: #ff5500; }
+
+  /* Volume control */
+  .volume-wrap { display: flex; align-items: center; gap: 8px; }
+  .vol-icon { font-size: 16px; cursor: pointer; user-select: none; flex-shrink: 0; }
+  .vol-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100px;
+    height: 4px;
+    border-radius: 2px;
+    background: #2a2a2a;
+    outline: none;
+    cursor: pointer;
+  }
+  .vol-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: #ff5500;
+    cursor: pointer;
+    transition: transform 0.1s;
+  }
+  .vol-slider::-webkit-slider-thumb:hover { transform: scale(1.2); }
+  .vol-slider::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #ff5500; cursor: pointer; border: none; }
+  .vol-label { font-size: 12px; color: #555; min-width: 28px; }
+
+  .sync-status { margin-left: auto; font-size: 12px; color: #22c55e; display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+  .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; }
+
+  /* Chat */
+  .chat-side { width: 300px; display: flex; flex-direction: column; background: #0f0f0f; flex-shrink: 0; }
+  .chat-header { padding: 14px 16px; border-bottom: 1px solid #1e1e1e; font-size: 12px; font-weight: 600; color: #555; letter-spacing: 0.8px; text-transform: uppercase; flex-shrink: 0; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 14px 12px; display: flex; flex-direction: column; gap: 3px; scrollbar-width: thin; scrollbar-color: #2a2a2a transparent; }
+  .msg { padding: 7px 11px; border-radius: 12px; font-size: 13px; line-height: 1.45; max-width: 90%; word-break: break-word; }
+  .msg.mine { background: #ff5500; color: white; align-self: flex-end; border-bottom-right-radius: 3px; }
+  .msg.theirs { background: #1a1a1a; color: #f0ede8; align-self: flex-start; border-bottom-left-radius: 3px; }
+  .msg.system { background: transparent; color: #444; font-size: 11px; align-self: center; text-align: center; padding: 3px 0; font-style: italic; }
+  .msg-sender { font-size: 10px; font-weight: 600; margin-bottom: 3px; opacity: 0.8; }
+  .chat-input-row { padding: 10px 12px; border-top: 1px solid #1e1e1e; display: flex; gap: 8px; flex-shrink: 0; }
+  .chat-input { flex: 1; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 20px; padding: 8px 14px; color: #f0ede8; font-size: 13px; font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.2s; }
+  .chat-input:focus { border-color: #ff5500; }
+  .chat-input::placeholder { color: #444; }
+  .send-btn { width: 36px; height: 36px; border-radius: 50%; background: #ff5500; border: none; color: white; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.15s, transform 0.1s; flex-shrink: 0; }
+  .send-btn:hover { background: #e04800; }
+  .send-btn:active { transform: scale(0.93); }
+
+  /* Join overlay */
+  .join-overlay { position: fixed; inset: 0; background: #0d0d0d; display: flex; align-items: center; justify-content: center; z-index: 200; }
+  .join-card { background: #111; border: 1px solid #2a2a2a; border-radius: 20px; padding: 36px; width: 360px; display: flex; flex-direction: column; gap: 18px; }
+  .join-logo { font-family: 'Space Mono', monospace; font-size: 26px; font-weight: 700; color: #ff5500; text-align: center; }
+  .join-logo span { color: #f0ede8; }
+  .join-sub { text-align: center; font-size: 14px; color: #555; margin-top: -10px; }
+  .join-label { font-size: 12px; color: #555; margin-bottom: 6px; }
+  .join-input { width: 100%; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 10px; padding: 11px 14px; color: #f0ede8; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.2s; }
+  .join-input:focus { border-color: #ff5500; }
+  .join-input::placeholder { color: #444; }
+  .join-btn-primary { width: 100%; background: #ff5500; color: white; border: none; border-radius: 10px; padding: 13px; font-size: 15px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: background 0.15s; }
+  .join-btn-primary:hover { background: #e04800; }
+  .or-divider { display: flex; align-items: center; gap: 12px; color: #333; font-size: 12px; }
+  .or-divider::before, .or-divider::after { content: ''; flex: 1; height: 1px; background: #222; }
+  .join-row { display: flex; gap: 8px; }
+  .join-btn-secondary { background: #1a1a1a; color: #f0ede8; border: 1px solid #2a2a2a; border-radius: 10px; padding: 11px 16px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; white-space: nowrap; transition: border-color 0.15s; }
+  .join-btn-secondary:hover { border-color: #ff5500; color: #ff5500; }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 20px; padding: 10px 20px; font-size: 13px; color: #f0ede8; transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1); z-index: 300; white-space: nowrap; }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="join-overlay" id="joinOverlay">
+  <div class="join-card">
+    <div class="join-logo">SC<span>Together</span></div>
+    <div class="join-sub">Musik synchronisiert hören 🎵</div>
+    <div>
+      <div class="join-label">Dein Name</div>
+      <input class="join-input" id="nameInput" placeholder="z.B. Max" maxlength="20" />
+    </div>
+    <button class="join-btn-primary" id="createBtn">✦ Neuen Raum erstellen</button>
+    <div class="or-divider">oder beitreten</div>
+    <div>
+      <div class="join-label">Raumcode eingeben</div>
+      <div class="join-row">
+        <input class="join-input" id="codeInput" placeholder="XXXXXX" maxlength="6" style="font-family:'Space Mono',monospace; letter-spacing:3px; text-transform:uppercase;" />
+        <button class="join-btn-secondary" id="joinBtn">Beitreten</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="app" id="mainApp">
+  <div class="header">
+    <div class="logo">SC<span>Together</span></div>
+    <div class="room-badge" id="roomBadge" onclick="copyCode()">
+      <div class="dot"></div>
+      <span id="roomCodeLabel">------</span>
+      <span style="font-size:12px;">📋</span>
+    </div>
+    <div class="users-area" id="usersArea">
+      <span style="font-size:12px; color:#444;">Verbinde...</span>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="player-side">
+      <div class="url-bar">
+        <input class="url-input" id="urlInput" placeholder="SoundCloud-Link einfügen... soundcloud.com/artist/track" />
+        <button class="load-btn" id="loadBtn">▶ Laden & Sync</button>
+      </div>
+      <div class="iframe-wrapper">
+        <div class="placeholder" id="placeholder">
+          <div class="placeholder-icon">🎵</div>
+          <h3>Kein Track geladen</h3>
+          <p>Füge oben einen SoundCloud-Link ein und teile den Raumcode</p>
+        </div>
+        <iframe id="sc-frame" allow="autoplay"></iframe>
+      </div>
+      <div class="controls">
+        <button class="ctrl-btn" id="syncNowBtn">🔄 Sync</button>
+        <button class="ctrl-btn" onclick="copyCode()">🔗 Code kopieren</button>
+
+        <!-- Volume -->
+        <div class="volume-wrap">
+          <span class="vol-icon" id="volIcon" onclick="toggleMute()">🔊</span>
+          <input type="range" class="vol-slider" id="volSlider" min="0" max="100" value="80" />
+          <span class="vol-label" id="volLabel">80%</span>
+        </div>
+
+        <div class="sync-status">
+          <div class="sync-dot" id="syncDot"></div>
+          <span id="syncLabel">Verbinde...</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chat-side">
+      <div class="chat-header">💬 &nbsp;Chat</div>
+      <div class="chat-messages" id="chatMessages"></div>
+      <div class="chat-input-row">
+        <input class="chat-input" id="chatInput" placeholder="Nachricht..." maxlength="200" />
+        <button class="send-btn" id="sendBtn">➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const ABLY_KEY = 'EHrr2w.W9oWuQ:MRNAhZPX_lU6mPVvI-ye3JBgXkoHe_oos3bYxEA8e9U';
+  const COLORS = ['#ff5500','#7c3aed','#0ea5e9','#10b981','#f59e0b','#ec4899','#ef4444'];
+
+  let myName = '', myColor = '', myId = '', roomCode = '';
+  let members = {}, currentUrl = '';
+  let ably = null, ablyChannel = null;
+  let scWidget = null;
+  let isMuted = false, lastVol = 80;
+
+  function genCode() { return Math.random().toString(36).substring(2,8).toUpperCase(); }
+  function genId() {
+    if (!sessionStorage.getItem('sct_id')) sessionStorage.setItem('sct_id', Math.random().toString(36).substring(2,12));
+    return sessionStorage.getItem('sct_id');
+  }
+  function colorFor(id) {
+    let h = 0; for (let c of id) h = h * 31 + c.charCodeAt(0);
+    return COLORS[Math.abs(h) % COLORS.length];
+  }
+  function esc(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  myId = genId();
+
+  // Volume control
+  const volSlider = document.getElementById('volSlider');
+  const volLabel = document.getElementById('volLabel');
+  const volIcon = document.getElementById('volIcon');
+
+  volSlider.addEventListener('input', () => {
+    const val = parseInt(volSlider.value);
+    lastVol = val;
+    isMuted = false;
+    applyVolume(val);
+  });
+
+  function applyVolume(val) {
+    volLabel.textContent = val + '%';
+    volIcon.textContent = val === 0 ? '🔇' : val < 40 ? '🔉' : '🔊';
+    if (scWidget) scWidget.setVolume(val);
+  }
+
+  function toggleMute() {
+    if (isMuted) {
+      isMuted = false;
+      volSlider.value = lastVol;
+      applyVolume(lastVol);
+    } else {
+      isMuted = true;
+      lastVol = parseInt(volSlider.value);
+      volSlider.value = 0;
+      applyVolume(0);
+    }
+  }
+
+  // Join UI
+  document.getElementById('createBtn').onclick = () => {
+    const name = document.getElementById('nameInput').value.trim();
+    if (!name) return document.getElementById('nameInput').focus();
+    enterRoom(name, genCode());
+  };
+  document.getElementById('joinBtn').onclick = () => {
+    const name = document.getElementById('nameInput').value.trim();
+    const code = document.getElementById('codeInput').value.trim().toUpperCase();
+    if (!name) return document.getElementById('nameInput').focus();
+    if (code.length < 4) return document.getElementById('codeInput').focus();
+    enterRoom(name, code);
+  };
+  document.getElementById('codeInput').oninput = e => e.target.value = e.target.value.toUpperCase();
+  ['nameInput','codeInput'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('joinBtn').click(); });
+  });
+
+  async function enterRoom(name, code) {
+    myName = name; myColor = colorFor(myId); roomCode = code;
+    document.getElementById('joinOverlay').style.display = 'none';
+    document.getElementById('roomCodeLabel').textContent = roomCode;
+    setStatus('Verbinde...', '#f59e0b');
+    await setupAbly(code);
+    addMember(myId, myName, myColor);
+    publish('presence', {});
+    sysMsg(`${myName} ist dem Raum beigetreten`);
+    renderUsers();
+    showToast(`Raum ${roomCode} betreten ✓`);
+  }
+
+  async function setupAbly(code) {
+    ably = new Ably.Realtime({ key: ABLY_KEY, clientId: myId });
+    await new Promise(res => ably.connection.once('connected', res));
+    setStatus('Verbunden', '#22c55e');
+    ablyChannel = ably.channels.get('sctogether-' + code);
+    ablyChannel.subscribe(msg => handle(msg.name, msg.data));
+  }
+
+  function publish(type, data) {
+    if (!ablyChannel) return;
+    ablyChannel.publish(type, { ...data, from: myId, name: myName, color: myColor });
+  }
+
+  function handle(type, d) {
+    if (d.from === myId) return;
+    switch(type) {
+      case 'presence':
+        addMember(d.from, d.name, d.color);
+        renderUsers();
+        if (currentUrl) publish('state', { url: currentUrl });
+        break;
+      case 'chat':
+        addMsg(d.name, d.text, d.color, false);
+        break;
+      case 'load':
+        loadTrack(d.url, false);
+        sysMsg(`${d.name} hat einen Track geladen`);
+        break;
+      case 'state':
+        if (!currentUrl && d.url) { loadTrack(d.url, false); sysMsg('Track synchronisiert'); }
+        break;
+      case 'sync':
+        if (d.url) loadTrack(d.url, false);
+        sysMsg(`${d.name} hat Sync ausgelöst`);
+        break;
+      case 'leave':
+        delete members[d.from];
+        sysMsg(`${d.name} hat den Raum verlassen`);
+        renderUsers();
+        break;
+    }
+  }
+
+  function addMember(id, name, color) { members[id] = { id, name, color }; }
+
+  function renderUsers() {
+    const area = document.getElementById('usersArea');
+    const keys = Object.keys(members);
+    let html = '';
+    keys.slice(0,5).forEach(id => {
+      const m = members[id];
+      html += `<div class="avatar" style="background:${m.color}22;color:${m.color}" title="${esc(m.name)}">${m.name.substring(0,2).toUpperCase()}</div>`;
+    });
+    if (keys.length > 5) html += `<span style="font-size:11px;color:#666;margin-left:6px;">+${keys.length-5}</span>`;
+    html += `<span style="font-size:11px;color:#444;margin-left:8px;">${keys.length} online</span>`;
+    area.innerHTML = html;
+  }
+
+  function setStatus(text, color) {
+    document.getElementById('syncLabel').textContent = text;
+    document.getElementById('syncLabel').style.color = color;
+    document.getElementById('syncDot').style.background = color;
+  }
+
+  // Player
+  document.getElementById('loadBtn').onclick = () => {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) return;
+    loadTrack(url, true);
+  };
+  document.getElementById('urlInput').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loadBtn').click(); });
+
+  function loadTrack(url, shouldBroadcast) {
+    currentUrl = url;
+    const frame = document.getElementById('sc-frame');
+    const encoded = encodeURIComponent(url);
+    frame.src = `https://w.soundcloud.com/player/?url=${encoded}&color=%23ff5500&auto_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&visual=true`;
+    frame.style.display = 'block';
+    document.getElementById('placeholder').style.display = 'none';
+    document.getElementById('urlInput').value = url;
+
+    // Init SC Widget API after frame loads
+    frame.onload = () => {
+      scWidget = SC.Widget(frame);
+      scWidget.bind(SC.Widget.Events.READY, () => {
+        applyVolume(parseInt(volSlider.value));
+      });
+    };
+
+    if (shouldBroadcast) publish('load', { url });
+  }
+
+  document.getElementById('syncNowBtn').onclick = () => {
+    if (!currentUrl) return showToast('Kein Track geladen');
+    publish('sync', { url: currentUrl });
+    loadTrack(currentUrl, false);
+    sysMsg('Sync ausgelöst – alle hören jetzt von vorne');
+    showToast('Sync gesendet!');
+  };
+
+  // Chat
+  document.getElementById('sendBtn').onclick = sendChat;
+  document.getElementById('chatInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+
+  function sendChat() {
+    const input = document.getElementById('chatInput');
+    const text = input.value.trim();
+    if (!text || !myName) return;
+    addMsg(myName, text, myColor, true);
+    publish('chat', { text });
+    input.value = '';
+  }
+
+  function addMsg(name, text, color, mine) {
+    const box = document.getElementById('chatMessages');
+    const el = document.createElement('div');
+    el.className = 'msg ' + (mine ? 'mine' : 'theirs');
+    if (!mine) el.innerHTML = `<div class="msg-sender" style="color:${color}">${esc(name)}</div>${esc(text)}`;
+    else el.textContent = text;
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function sysMsg(text) {
+    const box = document.getElementById('chatMessages');
+    const el = document.createElement('div');
+    el.className = 'msg system';
+    el.textContent = text;
+    box.appendChild(el);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function copyCode() {
+    if (!roomCode) return;
+    navigator.clipboard?.writeText(roomCode).then(() => showToast(`Code „${roomCode}" kopiert! 📋`));
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2500);
+  }
+
+  window.addEventListener('beforeunload', () => {
+    if (myName && ablyChannel) publish('leave', {});
+  });
+
+  document.getElementById('nameInput').focus();
+</script>
+</body>
+</html>
